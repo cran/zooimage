@@ -1,4 +1,4 @@
-## Copyright (c) 2004-2012, Ph. Grosjean <phgrosjean@sciviews.org>
+## Copyright (c) 2004-2015, Ph. Grosjean <phgrosjean@sciviews.org>
 ##
 ## This file is part of ZooImage
 ## 
@@ -104,8 +104,11 @@ rbind.ZIRes <- function (..., deparse.level = 1)
 
 ## Calculate abundances, biomasses and size spectra per class in a sample
 processSample <- function (x, sample, keep = NULL, detail = NULL, classes = "both",
-header = c("Abd", "Bio"), biomass = NULL, breaks = NULL)
+header = c("Abd", "Bio"), cells = NULL, biomass = NULL, breaks = NULL)
 {
+	## Fix ECD in case of FIT_VIS data
+	if ("FIT_Area_ABD" %in% names(x)) x$ECD <- ecd(x$FIT_Area_ABD)
+			
 	## Check arguments
 	if (missing(sample)) {
 		sample <- unique(sampleInfo(x$Label, type = "sample", ext = ""))
@@ -131,6 +134,17 @@ header = c("Abd", "Bio"), biomass = NULL, breaks = NULL)
 	if (!length(x$Dil) || !is.numeric(x$Dil)) {
 		warning("'Dil' column is missing or not numeric in 'x'")
 		return(NULL)
+	}
+	
+	## Do we compute the number of cells and the ECD per cell?
+	## TODO: should not rely on a file here (use a predict() method of a ZICell object)!
+	if (!is.null(cells) && file.exists(cells)) {
+####		## Must be a ZICell model here! predict() iterates on all items
+####		## of the list to compute cells for all classes!
+####		x$Nb_cells <- predict(cells, x)
+		## Fixed by G. Wacquet: x$Nb_cells -> x, because cellCompute() returns the whole df
+		x <- cellCompute(x, cells)
+    x$ECD_cells <- ecd(x$FIT_Area_ABD, x$Nb_cells)
 	}
 	
 	## Extract only data for a given sample
@@ -160,6 +174,12 @@ header = c("Abd", "Bio"), biomass = NULL, breaks = NULL)
 		return(NULL)
 	} else x$Cl <- Cl
 	
+	## By default, only keep taxa starting with uppercase
+	if (is.null(keep)) {
+    keep <- levels(x$Cl)
+    keep <- keep[grepl("[A-Z]", keep)]
+  }
+	
 	## Subsample, depending on which classes we keep
 	if (length(keep)) {
 		keep <- as.character(keep)
@@ -169,6 +189,7 @@ header = c("Abd", "Bio"), biomass = NULL, breaks = NULL)
 		}
 		x <- x[x$Cl %in% keep, ] # Select keep levels
 	}
+	Cl <- as.character(x$Cl)
 	if (NROW(x) == 0) {
 		warning("no data left for this sample in 'x' when 'keep' is applied")
 		return(NULL)
@@ -208,12 +229,19 @@ header = c("Abd", "Bio"), biomass = NULL, breaks = NULL)
 			x$P2 <- biomass[2]
 			x$P3 <- biomass[3]
 		} else stop("wrong 'biomass', must be NULL, a vector of 3 values or a data frame with Class, P1, P2 and P3")
-		if(!is.numeric(x$ECD)) stop("'ECD' required for biomasses")
-		x$BioWeight <- (x$P1 * x$ECD^x$P3 + x$P2) * x$Dil
+		## Prefer using ECD_cells and Nb_cells if it exists
+		if (is.numeric(x$ECD_cells)) {
+			x$BioWeight <- (x$P1 * x$ECD_cells^x$P3 + x$P2) * x$Dil * x$Nb_cells
+		} else {
+			if (!is.numeric(x$ECD)) stop("'ECD' required for biomasses")
+			x$BioWeight <- (x$P1 * x$ECD^x$P3 + x$P2) * x$Dil
+		}
 	}
 	
+	## By default, give detail for all kept classes
+  if (is.null(detail)) detail <- keep
+	
 	## Split among detail, if provided
-	Cl <- as.character(x$Cl)
 	if (length(detail)) {
 		# We want more details for one ore more groups...
 		detail <- as.character(detail)
@@ -222,32 +250,48 @@ header = c("Abd", "Bio"), biomass = NULL, breaks = NULL)
 		
 		Cl[!Cl %in% detail] <- "[other]"
 		x$Cl <- Cl
-		res <- tapply(x$Dil, Cl, sum, na.rm = TRUE)
-		res <- res[c(detail, "[other]")]
-		res <- c(res, '[total]' = sum(x$Dil, na.rm = TRUE))
-		names(res) <- paste(header[1], names(res))
+		if (any(Cl == "[other]")) {
+      sel <- c(detail, "[other]")
+    } else sel <- detail
+    abdnames <- paste(header[1], c(sel, "[total]"))
+    bionames <- paste(header[2], c(sel, "[total]"))
+		if (is.numeric(x$Nb_cells)) {
+			res <- tapply(x$Dil * x$Nb_cells, Cl, sum, na.rm = TRUE)
+			res <- res[sel]
+			res <- c(res, '[total]' = sum(x$Dil  * x$Nb_cells, na.rm = TRUE))
+		} else {
+			res <- tapply(x$Dil, Cl, sum, na.rm = TRUE)
+			res <- res[sel]
+			res <- c(res, '[total]' = sum(x$Dil, na.rm = TRUE))
+		}
+		names(res) <- abdnames
 		
 		if (!missing(biomass)) {
 			resbio <- tapply(x$BioWeight, Cl, sum, na.rm = TRUE)
-			resbio <- resbio[c(detail, "[other]")]
+			resbio <- resbio[sel]
 			resbio <- c(resbio, '[total]' = sum(x$BioWeight, na.rm = TRUE))
-			names(resbio) <- paste(header[2], names(resbio))
+			names(resbio) <- bionames
 			res <- c(res, resbio)
 		}
 		
 	} else { # Total abundance (and biomass) only
-		res <- sum(x$Dil, na.rm = TRUE)
+		if (is.numeric(x$Nb_cells)) {
+			res <- sum(x$Dil * x$Nb_cells, na.rm = TRUE)
+		} else {
+			res <- sum(x$Dil, na.rm = TRUE)
+		}
 		if (!missing(biomass))
 			res <- c(res, sum(x$BioWeight, na.rm = TRUE))
 		names(res) <- paste(header, "[total]")
 	}
+	res[is.na(res)] <- 0
 	
 	## Make the result a data frame with first column being Id, and make it
 	## a ZIRes object inheriting from data frame
 	res <- structure(data.frame(Id = sample, t(res), check.names = FALSE),
 		class = c("ZI3Res", "ZIRes", "data.frame"))
 	
-	## Do we calculate size spectra?
+	## Do we calculate size spectra? (always by colonies, only)!
 	if (length(breaks)) {
 		if (!is.numeric(breaks) || length(breaks) < 2)
 			stop("'breaks' must be a vector of two or more numerics or NULL")
@@ -291,7 +335,7 @@ header = c("Abd", "Bio"), biomass = NULL, breaks = NULL)
 			'[total]' = apply(spectrum, 2, sum))	
 		}
 		
-		## Eliminate all ine except total if detail is not provided
+		## Eliminate all lines except total if detail is not provided
 		if (!length(detail))
 			spectrum <- spectrum[NROW(spectrum), , drop = FALSE]
 
@@ -305,8 +349,8 @@ header = c("Abd", "Bio"), biomass = NULL, breaks = NULL)
 }
 
 processSampleAll <- function (path = ".", zidbfiles, ZIClass = NULL, keep = NULL,
-detail = NULL, classes = "both", header = c("Abd", "Bio"), biomass = NULL,
-breaks = NULL)
+detail = NULL, classes = "both", header = c("Abd", "Bio"), cells = NULL,
+biomass = NULL, breaks = NULL)
 {
 	## First, switch to that directory                                       
 	if (!checkDirExists(path)) return(invisible(FALSE))
@@ -342,9 +386,10 @@ breaks = NULL)
 		if (length(ZIClass)) dat <- predict(ZIClass, dat, class.only = FALSE)
 
 		## Process that one sample and merge with the rest
-		res <- rbind(res, processSample(dat, keep = keep, detail = detail,
-			classes = classes, header = header, biomass = biomass,
-			breaks = breaks))
+		res0 <- processSample(dat, keep = keep, detail = detail, 
+      classes = classes, header = header, cells = cells, 
+      biomass = biomass, breaks = breaks)
+    res <- rbind(res, res0)
 	}
 	progress(101) # Clear progression indicator
 	message(" -- Done! --")

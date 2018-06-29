@@ -1,32 +1,33 @@
-## Copyright (c) 2012, Ph. Grosjean <phgrosjean@sciviews.org> & K. Denis
+## Copyright (c) 2015, Ph. Grosjean <phgrosjean@sciviews.org> & K. Denis
 ##
 ## This file is part of ZooImage
-## 
+##
 ## ZooImage is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
 ## the Free Software Foundation, either version 2 of the License, or
 ## (at your option) any later version.
-## 
+##
 ## ZooImage is distributed in the hope that it will be useful,
 ## but WITHOUT ANY WARRANTY; without even the implied warranty of
 ## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ## GNU General Public License for more details.
-## 
+##
 ## You should have received a copy of the GNU General Public License
 ## along with ZooImage.  If not, see <http://www.gnu.org/licenses/>.
 
 ## Make a ZooImage database file for one sample
-zidbMake <- function (zidir, zidbfile = paste0(zidir, ".zidb"),
-zisfile = file.path(dirname(zidir), "Description.zis"), type = "ZI3",
-check = TRUE, check.vignettes = TRUE, replace = FALSE,
+zidbMake <- function (zidir,
+zidbfile = paste0(sub("[/\\]+$", "", zidir), ".zidb"),
+zisfile = file.path(dirname(zidir), "Description.zis"), type = "ZI5",
+smptime = "", check = FALSE, check.vignettes = FALSE, replace = FALSE,
 delete.source = replace)
-{		
+{
 	## Check the format
-	if (type != "ZI3") {
-		warning("only 'ZI3' is currently supported for 'type'")
-		return(invisible(FALSE))	
+	if (!type %in% c("ZI1", "ZI3", "ZI5")) {
+		warning("only 'ZI1', 'ZI3', or 'ZI5' are currently supported for 'type'")
+		return(invisible(FALSE))
 	}
-	
+
 	if (!isTRUE(as.logical(replace)) && file.exists(zidbfile)) {
 		## Nothing to do... the file already exists
 		if (isTRUE(as.logical(delete.source)) &&
@@ -34,16 +35,20 @@ delete.source = replace)
 			unlink(zidir, recursive = TRUE)
 		return(invisible(TRUE))	# Nothing else to do
 	}
-	
+
 	## Make sure everything is fine for this directory
 	if (isTRUE(as.logical(check)))
-		if (!zidVerify(zidir, type = type, check.vignettes = check.vignettes))
-			return(invisible(FALSE))
-	
+		if (!zidVerify(zidir, type = type, check.vignettes = check.vignettes)) {
+			warning("problem when verifying the ZID data")
+		  return(invisible(FALSE))
+		}
+
 	## Make sure the .RData file is created (or refreshed)
-	if (!zidDatMake(zidir, type = type, replace = replace))
-		return(invisible(FALSE))
-	
+	if (!zidDatMake(zidir, type = type, replace = replace)) {
+		warning("problem when creating the RData file")
+	  return(invisible(FALSE))
+	}
+
     ## List all vignettes
     Vigs <- dir(zidir, pattern = "\\.jpg$", full.names = TRUE)
 	## Maybe the vignettes are in .png format...
@@ -61,20 +66,33 @@ delete.source = replace)
 		warning("No ZIM files found!")
 		return(invisible(FALSE))
 	}
-    
+
 	## Make sure data from the .zis file are correct
-	if (!checkFileExists(zisfile, "zis", force.file = TRUE))
-		return(invisible(FALSE))
+	if (!checkFileExists(zisfile, "zis", force.file = TRUE)) {
+		warning("No ZIS file (Description.zis usually) file found")
+	  return(invisible(FALSE))
+	}
 	zisData <- zisRead(zisfile)
+	# Replace <<<SMP>>>, <<<DATE>>> and <<<TIME>>> by the correct values
+	# in case we got only one entry
+	if (length(zisData$Label) == 1) {
+    if (zisData$Label == "<<<SMP>>>")
+      zisData$Label <- basename(zidir)
+    if (zisData$Date == "<<<DATE>>>")
+      zisData$Date <- sampleInfo(basename(zidir),  type = "date")
+      #zisData$Date <- as.Date(sub("^.+\\.([0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9])\\..+$", "\\1", basename(zidir)))
+    if (zisData$Time == "<<<TIME>>>")
+      zisData$Time <- smptime
+	}
 	isSample <- (zisData$Label == basename(zidir))
 	if (!length(isSample) || sum(isSample) < 1) {
-		warning("Incorrect .zs file, or the file does not contain data for this sample")
+		warning("Incorrect .zis file, or the file does not contain data for this sample")
 		return(invisible(FALSE))
 	}
     ## Extract data for this sample
 	zisData <- zisData[isSample, ]
 	## TODO: may be check that a minimum set of variables is there...
-	
+
     ## Create the .zidb file: put all vignettes there, plus the .RData file
 	message("Creating the ZIDB file...")
     filehashOption(defaultType = "DB1")
@@ -83,7 +101,7 @@ delete.source = replace)
     db <- dbInit(zidbfile)
 
     ## Indicate which zooimage version and which image type we use
-    dbInsert(db, ".ZI", 3)
+    dbInsert(db, ".ZI", 5)
     dbInsert(db, ".ImageType", VigType)
 
     ## Read each vignette in turn and add it to the database
@@ -99,7 +117,7 @@ delete.source = replace)
 		}
     	dbInsert(db, VigName, readBin(Vig, "raw", VigSize + 100))
     }
-    
+
     ## Add .zim files to db
 	message("Adding data from ZIM files to ZIDB file...")
     for (i in 1:length(Zims)) {
@@ -108,7 +126,7 @@ delete.source = replace)
     	ZimSize <- file.info(Zim)$size
 		if (is.na(ZimSize)) {
 			warning("file '", Zim, "' not found or of null length")
-			return(invisible(FALSE))	
+			return(invisible(FALSE))
 		}
     	dbInsert(db, ZimName, readBin(Zim, "raw", ZimSize + 100))
     }
@@ -120,50 +138,58 @@ delete.source = replace)
     ## Add the data frame with all data and metadata to the file
 	message("Adding R data to ZIDB file...")
     zidat <- file.path(zidir, paste0(basename(zidir), "_dat1.RData"))
-    obj <- load(zidat)
+    ## Check also other variants
+	if (!file.exists(zidat))
+		zidat <- file.path(zidir, paste0(basename(zidir), "_dat3.RData"))
+	if (!file.exists(zidat))
+		zidat <- file.path(zidir, paste0(basename(zidir), "_dat5.RData"))
+	obj <- load(zidat)
 	if (length(obj) != 1) {
 		warning("Error loading ", zidat)
 		return(invisible(FALSE))
 	}
-    dbInsert(db, ".Data", get(obj))
+    dat <- get(obj)
+	## Fix ECD in case of FIT_VIS data
+	if ("FIT_Area_ABD" %in% names(dat)) dat$ECD <- ecd(dat$FIT_Area_ABD)
+	dbInsert(db, ".Data", dat)
 
 	## Do we delete sources?
     if (isTRUE(as.logical(delete.source)))
         unlink(zidir, recursive = TRUE)
-		
+
 	message("-- Done! --")
-	
+
 	## Indicate success...
 	invisible(TRUE)
 }
 
 ## Make all .zidb files for data in the corresponding directory
 zidbMakeAll <- function (path = ".", samples,
-zisfiles = file.path(dirname(samples), "Description.zis"), type = "ZI3",
-check = TRUE, check.vignettes = TRUE, replace = FALSE, delete.source = replace)
-{ 
-	if (type != "ZI3")
-		stop("only 'ZI3' is currently supported for 'type'")
-	
-	## First, switch to that directory                                       
+zisfiles = file.path(dirname(samples), "Description.zis"), type = "ZI5",
+check = FALSE, check.vignettes = FALSE, replace = FALSE, delete.source = replace)
+{
+	if (!type %in%  c("ZI1", "ZI3", "ZI5"))
+		stop("only 'ZI1', 'ZI3', or ZI5' are currently supported for 'type'")
+
+	## First, switch to that directory
 	if (!checkDirExists(path)) return(invisible(FALSE))
 	initdir <- setwd(path)
 	on.exit(setwd(initdir))
 	path <- "."	# Indicate we are now in the right path
-	
+
 	## Get the list of samples to process
 	if (missing(samples) || !length(samples)) {	# Compute them from path
 		## All dirs not starting with '_'
 		dirs <- dir(path, pattern = "^[^_]", full.names = TRUE)
 		samples <- unique(dirs[file.info(dirs)$isdir]) # Keep only directories
 	}
-	
+
 	## If there is no dir, exit now
 	if (!length(samples)) {
 		warning("there are no directories to process in ", getwd())
 		return(invisible(FALSE))
 	}
-	
+
 	## Check zisfiles and make sure the vector has same length as samples
 	## possibly recycling the file(s)
 	zisfiles <- as.character(zisfiles)
@@ -174,13 +200,13 @@ check = TRUE, check.vignettes = TRUE, replace = FALSE, delete.source = replace)
 	if (!checkFileExists(zisfiles, "zis", force.file = TRUE))
 		return(invisible(FALSE))
 	zisfiles <- rep(zisfiles, length.out = length(samples))
-		
+
 	## Possibly verify the files
 	if (isTRUE(as.logical(check)))
-		if (!zidVerifyAll(path = path, samples = samples, 
+		if (!zidVerifyAll(path = path, samples = samples,
 			check.vignettes = check.vignettes))
 			return(invisible(FALSE))
-		
+
 	## Create the .zidb files
 	message("Creation of ZIDB files...")
 	flush.console()
@@ -200,7 +226,7 @@ check = TRUE, check.vignettes = TRUE, replace = FALSE, delete.source = replace)
 	} else {
 		## Possibly clean the whole directory (move .zim files to \_raw
 		## and delete the \_work subdir if everything is fine
-		zidClean(path = path, samples = samples)	
+		zidClean(path = path, samples = samples)
 		message("-- Done! --")
 		invisible(TRUE)
 	}
@@ -213,9 +239,9 @@ zidToZidb <- function (zidfile, zisfile = file.path(dirname(zidfile),
     if (!file.exists(paste0(zidfile, "b")) || isTRUE(as.logical(replace))) {
 		ZidDir <- sub("\\.zid$", "", zidfile)
 		IniDir <- dirname(zidfile)
-    
+
 		## Unzip the file...
-		message("Unzipping ZID file '", basename(zidfile), "' ...")    
+		message("Unzipping ZID file '", basename(zidfile), "' ...")
 		if (!length(tryCatch(unzip(zidfile, overwrite = replace,
 			junkpaths = FALSE, exdir = IniDir), error = function (e) warning(e),
 			warning = function (w) return()))) {
@@ -232,14 +258,14 @@ zidToZidb <- function (zidfile, zisfile = file.path(dirname(zidfile),
 		res <- zidbMake(zidir = ZidDir, type = "ZI3", check = TRUE,
 			check.vignettes = TRUE, replace = replace,
 			delete.source = delete.source)
-	
+
 	} else res <- TRUE
-	
+
 	# Do we have to delete the zidfile?
 	if (res && isTRUE(as.logical(delete.source))) unlink(zidfile)
-		
+
 	message("-- Done! --")
-		
+
 	invisible(res)
 }
 
@@ -253,7 +279,7 @@ delete.source = replace)
 	initdir <- setwd(path)
 	on.exit(setwd(initdir))
 	path <- "."	# Indicate we are now in the right path
-	
+
 	## Get the list of zidfiles to process
 	if (missing(zidfiles) || !length(zidfiles))	# Compute them from path
 		zidfiles <- dir(path, pattern = extensionPattern("zid"),
@@ -262,7 +288,7 @@ delete.source = replace)
 	## If there is no zidfiles in this dir, exit now
 	if (!length(zidfiles)) {
 		warning("There is no ZID files to process in ", getwd())
-		return(invisible(FALSE))	
+		return(invisible(FALSE))
 	}
 
 	## Make sure there is no path associated
@@ -270,7 +296,7 @@ delete.source = replace)
 	#	warning("You cannot provide paths for ZID files, just file names")
 	#	return(invisible(FALSE))
 	#}
-	
+
 	## Check zisfiles and make sure the vector has same length as zidfiles
 	## possibly recycling the file(s)
 	zisfiles <- as.character(zisfiles)
@@ -281,7 +307,7 @@ delete.source = replace)
 	if (!checkFileExists(zisfiles, "zis", force.file = TRUE))
 		return(invisible(FALSE))
 	zisfiles <- rep(zisfiles, length.out = length(zidfiles))
-	
+
 	## Create the .zidb files from the .zid files
 	message("Conversion of ZID to ZIDB files...")
 	flush.console()
@@ -295,7 +321,7 @@ delete.source = replace)
 		warning(sum(attr(ok, "ok")), "/", length(zidfiles),
 			" items were correctly converted (see .last.batch)")
 		invisible(FALSE)
-	} else {	
+	} else {
 		message("-- Done! --")
 		invisible(TRUE)
 	}
@@ -315,7 +341,7 @@ zidbToZid <- function (zidbfile, zisfile = file.path(dirname(zidbfile),
 			unlink(zidbfile)
 		return(invisible(TRUE))	# Nothing else to do
 	}
-	
+
 	if (!file.exists(zidfile) || isTRUE(as.logical(replace))) {
 		ZidDir <- sub("\\.zidb$", "", zidbfile)
 		## Create the directory to extract data
@@ -332,7 +358,7 @@ zidbToZid <- function (zidbfile, zisfile = file.path(dirname(zidbfile),
 		for (ZimName in ZimNames)
 		    writeBin(Zidb[[ZimName]],
 				con = file.path(ZidDir, paste0(ZimName, ".zim")))
-    
+
 		## Vignettes
 		VignNames <- AllFiles[-isZimFile]
 		message("Extracting vignettes...")
@@ -346,23 +372,23 @@ zidbToZid <- function (zidbfile, zisfile = file.path(dirname(zidbfile),
 		ZI.sample <- Zidb$.Data
 		message("Extracting Rdata file...")
 		save(ZI.sample, file = file.path(ZidDir, paste(sub(".zidb", "",
-			basename(zidbfile)), "_dat1.RData", sep = "")))    
-    
+			basename(zidbfile)), "_dat1.RData", sep = "")))
+
 		# .zis data
 		message("Extraction of ZIS data not supported yet...")
 		## TODO...
-	
+
 		# Create zid file
 		message("Compressing ZID file...")
 		res <- zidCompress(zidir = ZidDir, type = "ZI3", check = FALSE,
 			check.vignettes = FALSE, replace = replace, delete.source = TRUE)
 	} else res <- TRUE
-	
+
 	# Do we have to delete the zidbfile?
 	if (res && isTRUE(as.logical(delete.source))) unlink(zidbfile)
-	
+
 	message("-- Done! --")
-		
+
 	invisible(res)
 }
 
@@ -376,7 +402,7 @@ delete.source = replace)
 	initdir <- setwd(path)
 	on.exit(setwd(initdir))
 	path <- "."	# Indicate we are now in the right path
-	
+
 	## Get the list of zidbfiles to process
 	if (missing(zidbfiles) || !length(zidbfiles))	# Compute them from path
 		zidbfiles <- dir(path, pattern = extensionPattern("zidb"),
@@ -385,7 +411,7 @@ delete.source = replace)
 	## If there is no zidbfiles in this dir, exit now
 	if (!length(zidbfiles)) {
 		warning("There is no ZIDB files to process in ", getwd())
-		return(invisible(FALSE))	
+		return(invisible(FALSE))
 	}
 
 	## Make sure there is no path associated
@@ -393,7 +419,7 @@ delete.source = replace)
 	#	warning("You cannot provide paths for .zidb files, just file names")
 	#	return(invisible(FALSE))
 	#}
-	
+
 	## Check zisfiles and make sure the vector has same length as zidbfles
 	## possibly recycling the file(s)
 	zisfiles <- as.character(zisfiles)
@@ -404,7 +430,7 @@ delete.source = replace)
 	if (!checkFileExists(zisfiles, "zis", force.file = TRUE))
 		return(invisible(FALSE))
 	zisfiles <- rep(zisfiles, length.out = length(zidbfiles))
-	
+
 	## Create the .zid files from the .zidb files
 	message("Conversion of ZIDB to ZID files...")
 	flush.console()
@@ -429,12 +455,31 @@ zidbLink <- function (zidbfile)
 	db2env(dbInit(zidbfile))
 
 ## Read only Rdata file from a .zidb database
-zidbDatRead <- function (zidbfile)
-	zidbLink(zidbfile)$.Data
+zidbDatRead <- function (zidbfile) {
+	res <- zidbLink(zidbfile)$.Data
+	## Fix ECD in case of FIT_VIS data
+	if ("FIT_Area_ABD" %in% names(res)) res$ECD <- ecd(res$FIT_Area_ABD)
+	res
+}
 
 ## Read only the sample data
 zidbSampleRead <- function (zidbfile)
 	zidbLink(zidbfile)$.SampleData
+
+## Get a quick numerical summary for a zidb file
+zidbSummary <- function(zidbfile, n = 3) {
+  cat("== Sample metadata ==\n")
+  print(zidbSampleRead(zidbfile))
+  dat <- zidbDatRead(zidbfile)
+  cat("\n")
+  print(attr(dat, "metadata"))
+  if (n > 0) {
+    cat("\n== Sample data (first ", n, " lines on ", nrow(dat), ") ==\n",
+      sep = "")
+    print(head(dat, n = n))
+  }
+  invisible(dat)
+}
 
 ## Functions to plot a collage
 zidbPlotNew <- function (main = "ZooImage collage", ...)
@@ -447,10 +492,12 @@ zidbPlotNew <- function (main = "ZooImage collage", ...)
 
 ## Function to get a vignette from the database, rescale it and draw it in its
 ## corresponding vignette item
-zidbDrawVignette <- function (rawimg, type = "jpg", item, nx = 5, ny = 5,
+zidbDrawVignette <- function(rawimg, type, item, nx = 5, ny = 5,
 vmar = 0.01)
 {
-	## Centers for each vignette, on a graph area of [0, 1] on x and y
+	if (missing(type)) type <- "guess"
+
+  ## Centers for each vignette, on a graph area of [0, 1] on x and y
 	nv <- nx * ny
 	## Coordinates for centers of each vignette area
 	xc <- (1:nx) / nx - 1/(nx * 2)
@@ -480,7 +527,11 @@ vmar = 0.01)
 	## processing, use native format, but 16bit not accepted for PNG and there
 	## is a problem in case of transparency channel (if any) in PNG images on
 	## windows devices
-	if (type == "png") {
+	if (type == "guess") {
+	  vigimg <- try(readPNG(rawimg, native = TRUE), silent = TRUE)
+	  if (inherits(vigimg, "try-error"))
+	    vigimg <- readJPEG(rawimg, native = TRUE)
+	} else if (type == "png") {
 		vigimg <- readPNG(rawimg, native = TRUE)
 	} else vigimg <- readJPEG(rawimg, native = TRUE)
 	vigdim <- dim(vigimg) # Dimensions of the image in pixels
@@ -525,4 +576,64 @@ vmar = 0.01)
 
 	## Now, display that vignette in the collage
 	rasterImage(vigimg, xleft, ybottom, xright, ytop, interpolate = interpolate)
+}
+
+## Plot vignettes page by page (25, 5x5 each page)
+zidbPlotPage <- function(zidbfile, page = 1, title = NULL, type = "guess",
+method = NULL, class = NULL) {
+  db <- zidbLink(zidbfile)
+  # Default title
+  if (is.null(title))
+    title <- zidbSampleRead(zidbfile)$Label
+  # Get the list of all vignettes for this sample
+  items <- ls(db)
+  vigs <- items[-grep("_dat1", items)]
+
+  # Do we use data from a _valid.RData file, and sort for given class(es)?
+  valid_file <- NULL
+  if (!is.null(method)) {
+    # Look for a _valid.RData file there
+    valid_file <- file.path(dirname(zidbfile), "_analyses", method,
+      paste0(sub("\\.zidb$", "", basename(zidbfile)), "_valid.RData"))
+  }
+  if (!is.null(valid_file)) {
+    if (!file.exists(valid_file)) {
+      stop("file '", valid_file, "' not found")
+    } else {
+      obj <- load(valid_file)
+      valid <- get(obj)
+      # Only keep objects in class
+      if (!is.null(class)) {
+        valid <- valid[valid$Class %in% class, ]
+        if (!length(valid)) {
+          stop("No items found for 'class' in 'valid_file'")
+        } else {
+          # Only keep these items
+          keep <- valid$Id
+          if (!all(keep %in% vigs)) {
+            stop("Mismatch between the .zidb file and the _valid.RData file")
+          } else {
+            vigs <- as.character(keep)
+          }
+        }
+      }
+    }
+  }
+
+  l <- length(vigs)
+  if (l < 1)
+    stop("No items in class, or class not found in this sample")
+  pages <- ceiling(l / 25)
+  if (!is.numeric(page) || page < 1 || page > pages)
+    stop("'page' must be a number between 1 and ", pages)
+  if (page == pages) {
+    n <- l %% 25
+    if (n == 0) n <- 25
+  } else n <- 25
+  offset <- (page - 1) * 25
+  # Plot the graph
+  zidbPlotNew(paste0(title, " - page ", page))
+  for (i in 1:n)
+    zidbDrawVignette(db[[vigs[offset + i]]], item = i, nx = 5, ny = 5,
+      type = type)
 }

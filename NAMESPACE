@@ -1,12 +1,30 @@
-import(utils)
+importFrom(grDevices, "dev.cur", "dev.list", "dev.new", "dev.off", "dev.size",
+  "png")
+if(.Platform$OS.type == "windows") {
+  importFrom(grDevices, "bringToTop")
+}
+importFrom(graphics, "abline", "axis", "barplot", "box", "grid", "hist",
+  "legend", "lines", "locator", "mtext", "par", "plot", "points", "rasterImage",
+  "text", "title")
+importFrom(stats, "anova", "as.formula", "coef", "lm", "lowess", "na.omit",
+  "predict", "runif", "xtabs")
+importFrom(digest, "digest")
+importFrom(utils, "packageDescription", "browseURL", "flush.console", "head",
+  "read.delim", "read.table", "tail", "type.convert", "unzip", "write.table",
+  "zip")
+importFrom(tools, "startDynamicHelp")
+importFrom(svMisc, "assignTemp", "batch", "fileEdit", "getTemp", "isMac",
+  "isRgui", "isWin", "progress", "rmTemp", "TempEnv", "compareRVersion")
 #import(tcltk)
 #import(tcltk2)
-import(svMisc)
 #import(svWidgets)
-import(svDialogs)
-import(filehash)
-import(jpeg)
-import(png)
+importFrom(svDialogs, "dlgDir", "dlgFilters", "dlgInput", "dlgList",
+  "dlgMessage", "dlgOpen", "dlgSave", "menuAdd", "menuAddItem", "menuDel")
+importFrom(filehash, "db2env", "dbCreate", "dbInit", "dbInsert",
+  "filehashOption")
+importFrom(jpeg, "readJPEG", "writeJPEG")
+importFrom(png, "readPNG", "writePNG")
+importFrom(tiff, "readTIFF")
 #import(ipred)
 #import(MASS)
 #import(randomForest)
@@ -16,8 +34,19 @@ import(png)
 #import(nnet)
 #import(tree)
 #import(RWeka)
-import(mlearning)
+importFrom(mlearning, "confusion", "cvpredict", "mlearning", "response")
 #import(party)
+importFrom(MASS, "lda")
+importFrom(mda, "mda", "gen.ridge")
+importFrom(shiny, "updateSelectInput", "shinyServer", "reactive", "isolate",
+  "renderPrint", "updateTabsetPanel", "renderPlot", "shinyUI", "fluidPage",
+  "fluidRow", "sidebarPanel", "selectInput", "actionButton", "mainPanel",
+  "tabsetPanel", "tabPanel", "verbatimTextOutput", "plotOutput")
+importFrom(DT, "dataTableOutput", "renderDataTable")
+
+# planktonSorter
+export(correctError)
+export(activeLearning)
 
 # Zic
 export(zicCheck)
@@ -43,8 +72,10 @@ export(zidbToZidAll)
 export(zidbLink)
 export(zidbDatRead)
 export(zidbSampleRead)
+export(zidbSummary)
 export(zidbPlotNew)
 export(zidbDrawVignette)
+export(zidbPlotPage)
 
 # Zie
 export(ZIE)
@@ -80,12 +111,21 @@ export(ZIClass)
 # ZITrain/ZITest
 export(prepareTrain)
 export(addToTrain)
+export(compTrain)
 export(getTrain)
 export(prepareTest)
 export(addToTest)
 export(getTest)
 export(recode)
 export(template)
+export(contextSelection)
+export(addItemsToTrain)
+export(dropItemsToTrain)
+
+# ZICell
+export(cellCount)
+export(cellModel)
+export(cellCompute)
 
 # ZIRes
 export(processSample)
@@ -106,6 +146,7 @@ export(trimString)
 export(underscoreToSpace)
 export(zipNoteAdd)
 export(zipNoteGet)
+export(makeZIVignettes)
 
 # File-Utilities
 export(extensionPattern)
@@ -128,9 +169,11 @@ export(forceDirCreate)
 # GUI
 export(aboutZI)
 export(acquireImg)
+export(activeLearningGUI)
 export(addVigsToTrain)
 export(analyzeClass)
 export(calib)
+export(countCellsGUI)
 export(closeAssistant)
 export(closeZooImage)
 export(collectTrain)
@@ -144,18 +187,24 @@ export(listObjects)
 export(loadObjects)
 export(makeClass)
 export(makeZid)
+export(makeZidb)
+export(makeZidbFlowCAM)
 export(makeTrain)
 export(optInOutDecimalSep)
 export(processImg)
 export(processSamples)
+export(processSamplesWithCells)
 export(removeObjects)
 export(saveObjects)
+export(validClass)
 export(vignettesClass)
 export(viewManual)
+export(viewFrenchManual)
 export(viewResults)
 export(ZIDlg)
 # Not in menus yet!
 #export(subpartZIDat)
+export(ZIUI)
 
 # GUI-Utilities
 export(selectGroups)
@@ -166,6 +215,11 @@ export(createThreshold)
 export(imageViewer)
 export(startPgm)
 export(modalAssistant)
+
+# Importation
+export(readFlowCAMctx)
+export(readFlowCAMlst)
+export(importFlowCAM)
 
 # S3 methods
 S3method(template, default)
